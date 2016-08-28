@@ -1,0 +1,84 @@
+---
+- name: Create AWS Instance
+  sudo: yes
+  hosts: '{{ target }}'
+  connection: local
+  gather_facts: False
+  environment:
+    AWS_ACCESS_KEY: "{{AWS_ACCESS_KEY}}"
+    AWS_SECRET_KEY: "{{AWS_SECRET_KEY}}"
+  vars:
+    target: 127.0.0.1
+  vars_prompt:
+    - name: "NAME"
+      prompt: "what is instance name (NAME - udp-collector02)?"
+      private: no
+      when: NAME is undefined
+    - name: "AZ"
+      prompt: "what AWS availability-zone (AZ - us-east-1b-prv or us-east-1a-pub)?"
+      private: no
+    - name: "ANSIBLE_GROUP"
+      prompt: "what ansible-group will this machine get added to (ANSIBLE_GROUP - collector)?"
+      private: no
+
+
+  tasks:
+    - include_vars: "{{inventory_dir}}/group_vars/{{ANSIBLE_GROUP}}.yml"
+    - include_vars: "{{inventory_dir}}/group_vars/{{AZ}}.yml"
+    - name: Launch EC2 machine
+      ec2:
+         key_name: "{{ AWS_KEY_NAME }}"
+         group: "{{ AWS_SECURITY_GROUP }}"
+         instance_type: "{{ AWS_INSTANCE_TYPE }}"
+         image: "{{ AWS_IMAGE }}"
+         wait: true
+         region: "{{ AWS_REGION }}"
+         vpc_subnet_id: "{{VPC_SUBNET_ID}}"
+         instance_tags: '{"Name":"{{NAME}}"}'
+      register: ec2
+      tags: ec2
+
+    - name: Wait for the instances to boot by checking the ssh port
+      wait_for: host={{item.private_ip}} port=22 delay=60 timeout=320 state=started
+      with_items: ec2.instances
+
+    - ec2_vol: volume_type="{{AWS_VOLUME_TYPE}}" region="{{AWS_REGION}}" volume_size="{{AWS_VOLUME_SIZE}}" instance={{item.id}}
+      with_items: ec2.instances
+      when: AWS_EBS
+
+    #- name: Create new EIP
+    #  action: ec2_eip region=us-east-1 aws_access_key={{ AWS_ACCESS_KEY }} aws_secret_key={{ AWS_SECRET_KEY }}
+    #  register: ee
+    #  tags: ec
+
+
+    #- name: associate new elastic IPs with each of the instances
+    #  ec2_eip: instance_id={{ item }} region={{ region }} ip={{ ee.public_ip }} aws_access_key={{ AWS_ACCESS_KEY }} aws_secret_key={{ AWS_SECRET_KEY }}
+    #  with_items: ec.instance_ids
+    #  register: ee2
+    #  tags: ec
+
+
+    #- name: Add new instance to host group
+      #add_host: name={{ item }} groups=launched,staging
+      #with_items: ee.public_ip
+      #tags: eip
+    
+    #- name: Wait for SSH to come up
+      #wait_for: host={{ item }} port=22 delay=120 timeout=320 state=started
+      #with_items: ee.public_ip
+      #tags: eip
+
+    #- name: Create A record in route 53
+      #route53:
+        #aws_access_key: "{{ AWS_ACCESS_KEY }}"
+        #aws_secret_key: "{{ AWS_SECRET_KEY }}"
+        #command: create
+        #zone: "{{ domain_name }}"
+        #record: ansible-collector.{{ domain_name }}
+        #type: A
+        #ttl: 7200
+        #value: "{{ item }}"
+        #overwrite: yes
+      #with_items: ee.public_ip
+      #tags: eip
